@@ -18,48 +18,109 @@
  */
 pipeline {
   agent none
+  options {
+    buildDiscarder(logRotator(numToKeepStr: '3'))
+    timeout(time: 1, unit: 'HOURS')
+  }
+  triggers {
+    cron('@weekly')
+    pollSCM('@daily')
+  }
   stages {
-    stage ('Compile') {
+    stage ('Directory LDAP API') {
       parallel {
-        stage ('Compile Java 8') {
+        stage ('Linux Java 8') {
           agent {
-            docker 'maven:3-jdk-8'
+            docker {
+              label 'ubuntu'
+              image 'maven:3-jdk-8'
+              args "-v /dev/urandom:/dev/random -v ${env.JENKINS_HOME}/.m2:/var/maven/.m2 -e MAVEN_CONFIG=/var/maven/.m2"
+            }
           }
-          steps {
-            sh 'mvn -V clean verify -DskipTests'
-          }
-        }
-        stage ('Build Java 11') {
-          agent {
-            docker 'maven:3-jdk-11'
-          }
-          steps {
-            sh 'mvn -V clean verify -DskipTests'
-          }
-        }
-      }
-    }
-    stage ('Test') {
-      parallel {
-        stage ('Test Java 8') {
-          agent {
-            docker 'maven:3-jdk-8'
-          }
-          steps {
-            sh 'mvn -V clean verify'
+          stages {
+            stage ('Compile') {
+              steps {
+                sh 'mvn -V clean verify -DskipTests -Duser.home=/var/maven'
+              }
+            }
+            stage ('Test') {
+              steps {
+                sh '''
+                export MAVEN_OPTS="-Xmx1024m -XX:MaxPermSize=128m"
+                mvn -V clean verify -Duser.home=/var/maven'''
+              }
+              post {
+                always {
+                  junit '**/target/surefire-reports/*.xml'
+                }
+              }
+            }
           }
           post {
             always {
-              junit '**/target/surefire-reports/*.xml'
+              deleteDir()
             }
           }
         }
-        stage ('Test Java 11') {
+        stage ('Linux Java 11') {
           agent {
-            docker 'maven:3-jdk-11'
+            docker {
+              label 'ubuntu'
+              image 'maven:3-jdk-11'
+              args "-v /dev/urandom:/dev/random -v ${env.JENKINS_HOME}/.m2:/var/maven/.m2 -e MAVEN_CONFIG=/var/maven/.m2"
+            }
           }
-          steps {
-            sh 'mvn -V clean verify'
+          stages {
+            stage ('Compile') {
+              steps {
+                sh 'mvn -V clean verify -DskipTests -Duser.home=/var/maven'
+              }
+            }
+            stage ('Test') {
+              steps {
+                sh '''
+                export MAVEN_OPTS="-Xmx1024m -XX:MaxPermSize=128m"
+                mvn -V clean verify -Duser.home=/var/maven'''
+              }
+            }
+          }
+          post {
+            always {
+              deleteDir()
+            }
+          }
+        }
+        stage ('Windows Java 8') {
+          agent {
+            label 'Windows'
+          }
+          when {
+            beforeAgent true
+            environment name: 'JENKINS_URL', value: 'https://builds.apache.org/'
+          }
+          stages {
+            stage ('Compile') {
+              steps {
+                bat '''
+                set JAVA_HOME=F:\\jenkins\\tools\\java\\latest1.8
+                F:\\jenkins\\tools\\maven\\latest3\\bin\\mvn -V clean verify -DskipTests
+                '''
+              }
+            }
+            stage ('Test') {
+              steps {
+                bat '''
+                set JAVA_HOME=F:\\jenkins\\tools\\java\\latest1.8
+                set MAVEN_OPTS="-Xmx1024m -XX:MaxPermSize=128m"
+                F:\\jenkins\\tools\\maven\\latest3\\bin\\mvn -V clean verify
+                '''
+              }
+            }
+          }
+          post {
+            always {
+              deleteDir()
+            }
           }
         }
       }
